@@ -58,14 +58,34 @@ in this environment; limitations are stated honestly.
 
 Residual allocated after both runs ≈ **8 MB → no leak**. No crash, no CUDA-context loss, no NaN/Inf. `STRESS_OK`.
 
-## 5. vLLM 0.21.0 API compatibility (the omni-pearl glue)
+## 5. Diffusion mining shim — end-to-end on the real stack (Blackwell)
+
+`miner/vllm-miner/tests/test_diffusion_pearl_e2e.py` — exercises the actual
+`DiffusionPearlConfig` / `DiffusionPearlOnlineLinearMethod` (the DiT mining path)
+against **real vLLM-Omni base classes + real pearl_gemm kernels + a real mining
+job** (gateway mocked, no live node), on sm120:
+
+| Check | Result |
+|---|---|
+| Real vLLM `ColumnParallelLinear` (Flux/GLM-Image DiT layer class) routed to Pearl method | ✅ `DiffusionPearlOnlineLinearMethod` |
+| bf16 DiT weight → online quant | ✅ **7-bit** (`|w|≤63`, noise headroom), kept non-transposed `[N,K]` |
+| `apply()` → `pearl_gemm_noisy` (mining kernel) → denoised output | ✅ **cos_sim 0.99972** vs true bf16 matmul; finite; bias applied |
+| PoW reference scan + (hard target) no false block | ✅ `blocks_submitted=0` |
+
+**2 passed.** This validates the diffusion mining path itself: a real DiT linear
+type is hooked, its weights are 7-bit-quantized, and its GEMM runs through the
+Pearl noisy mining kernel producing functionally-correct output on Blackwell.
+Full Flux.2-class models (~33 GB + gated) do not fit this 24 GB GPU, so the test
+drives the real DiT *layer type* + kernels rather than the entire pipeline.
+
+## 6. vLLM 0.21.0 API compatibility (the omni-pearl glue)
 
 All internal vLLM symbols/signatures the port imports were verified present in vLLM 0.21.0 (incl. `Int8ScaledMMLinearKernel`, CompressedTensors scheme/config bases, `model_executor.parameter.*`, `replace_parameter` still re-exported at the old path). py_compile + ruff clean on all changed/new files.
 
 ## What is NOT covered here (honest limits)
 
 - **End-to-end mining / block submission**: needs a live `pearld` node + `pearl-gateway` + a Pearl-quantized model. Not run here.
-- **The diffusion shim at runtime**: needs vLLM + vLLM-Omni + a quantized DiT model on GPU. Verified at import/signature/logic level only; not executed end-to-end.
+- **A full diffusion *pipeline*** (text-encoder → DiT → VAE, e.g. Flux.2): ~33 GB + gated, does not fit this 24 GB GPU. The diffusion mining shim *is* executed end-to-end on the real DiT layer type + kernels (§5), but not as a whole-model image-generation run.
 - **Competitive throughput**: Blackwell is the functional reference path by design (PR #130). The TOPS above show the kernels run efficiently and stably, not that this GPU is a competitive miner.
 - **Full noisy-GEMM matrix**: 15,206 cases; only sampled here.
 
