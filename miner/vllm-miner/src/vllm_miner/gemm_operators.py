@@ -37,6 +37,8 @@ REFERENCE_BACKEND_MIN_EXPECTED_HITS = float(
 
 
 def _use_reference_cuda_backend(device: torch.device | str | None = None) -> bool:
+    if os.environ.get("PEARL_GEMM_FORCE_KERNEL", "").lower() in ("1", "true", "yes"):
+        return False
     if not torch.cuda.is_available():
         return False
 

@@ -1,4 +1,6 @@
 # ruff: noqa: I001
+import os
+
 from blake3 import blake3
 
 import torch
@@ -9,6 +11,8 @@ BLAKE3_CHUNK_LEN = 1024
 
 
 def _use_reference_cuda_backend(device=None) -> bool:
+    if os.environ.get("PEARL_GEMM_FORCE_KERNEL", "").lower() in ("1", "true", "yes"):
+        return False
     if not torch.cuda.is_available():
         return False
     try:

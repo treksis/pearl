@@ -179,9 +179,13 @@ def normalize_cuda_arch(raw_arch: str) -> str:
     arch = arch.removeprefix("sm")
     arch = arch.replace(".", "")
 
-    if not re.fullmatch(r"[0-9]+a?", arch):
+    # Accept arch-specific ('a') and family ('f') suffixes. On consumer Blackwell
+    # the SM90 TMA path the kernels use is only enabled by the family target
+    # (sm_120f -> CUTLASS_ARCH_MMA_SM120F_ENABLED -> CUTE_ARCH_TMA_SM90_ENABLED);
+    # plain sm_120 and sm_120a do NOT enable it.
+    if not re.fullmatch(r"[0-9]+[af]?", arch):
         raise ValueError(
-            f"Invalid CUDA architecture {raw_arch!r}. Expected values like 90a, sm_90a, 121, or native."
+            f"Invalid CUDA architecture {raw_arch!r}. Expected values like 90a, sm_90a, 120f, 121, or native."
         )
     return arch
 

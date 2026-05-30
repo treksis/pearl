@@ -7,6 +7,8 @@
 #include <torch/nn/functional.h>
 #include <torch/python.h>
 
+#include <cstdlib>
+
 #include <cutlass/arch/arch.h>
 #include <cutlass/numeric_types.h>
 
@@ -117,6 +119,13 @@ namespace {
 constexpr int64_t kReferenceBackendPadMultiple = 128;
 
 bool use_reference_backend() {
+  // Diagnostic override: PEARL_GEMM_FORCE_KERNEL=1 forces the native fused
+  // CUTLASS kernel + in-kernel PoW (PR #118 path) even on Blackwell, bypassing
+  // the reference backend. Used to empirically validate the fused path on sm120.
+  const char* force = std::getenv("PEARL_GEMM_FORCE_KERNEL");
+  if (force != nullptr && (force[0] == '1' || force[0] == 'T' || force[0] == 't')) {
+    return false;
+  }
   auto dprops = at::cuda::getCurrentDeviceProperties();
   return dprops != nullptr && dprops->major >= 10;
 }
