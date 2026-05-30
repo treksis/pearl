@@ -150,6 +150,67 @@ is *not* the fast path to working competitive mining and it does *not* escape th
 one constraint that actually matters (byte-exact transcript). Fix the localized
 epilogue bug first; build native backends second, gated by the conformance harness.
 
+---
+
+# RESOLUTION — the denoise bug is fixed (and the fix is principled)
+
+**Root cause:** PR #118 added SM80 `ldmatrix` SMEM→register staging to the
+*mainloop* and the *noising kernels*, but **missed the denoise epilogue's two
+GEMMs** (`collective_epilogue.hpp`). On Hopper, WGMMA reads operands from SMEM via
+descriptors; on consumer Blackwell the SM80 `mma.sync` denoise atom needs operands
+in registers, so without `ldmatrix` the two denoise GEMMs read nothing → the noise
+correction is a **no-op** (`denoised C == noised product`, cos 0.665).
+
+**Fix:** mirror the mainloop's S2R staging into the denoise epilogue — build
+`Copy_Atom<SM75_U32x4_LDSM_N, ElementDenoise>` tiled copies from `tiled_mma_denoise`,
+and `cute::copy` (`ldmatrix`) `EAL/EARxBpEB` and `AxEBL/EBR` SMEM→registers before
+each `gemm(tiled_mma_denoise, …)`. Guarded by `__CUDA_ARCH__ >= 1000` so the Hopper
+path is byte-identical.
+
+**Validated on sm_120f (RTX PRO 4000 Blackwell):**
+
+| Check | Before | After fix |
+|---|---|---|
+| Vanilla GEMM vs ref | 0.999999 | 0.999999 |
+| Noising (A+EA, B+EB) | bit-exact | bit-exact |
+| **Denoised C vs true GEMM** | **0.665 (no-op)** | **0.999999** ✅ |
+| In-kernel PoW signal | fires | fires |
+| **Found block consensus-valid?** | — | **YES** — recomputed canonical hash `0.0015 ≤ target 0.0039` ✅ |
+
+So the fused kernel now produces correct inference output AND **verifiable** PoW
+blocks natively on consumer Blackwell. (Hopper unaffected — `>=1000` guard.)
+
+## Hacky / enablement measures still outstanding (honest audit)
+
+The denoise fix is real and principled. The scaffolding to *use* it in production
+is not yet clean — these are the remaining "hacky" bits, surfaced deliberately:
+
+1. **Build target (FIXED here):** `detect_native_cuda_arch()` previously returned
+   `"120"` (the broken target → TMA launch failure). Now returns `"120f"`/`"121f"`
+   for consumer Blackwell so auto-`uv sync` builds the working kernel. (Validation
+   used a manual `PEARL_GEMM_CUDA_ARCHS=120f` before this.)
+2. **Runtime dispatch (still a hack):** `PEARL_GEMM_FORCE_KERNEL=1` is a *diagnostic*
+   override of PR #130's `use_reference_backend()` gate. At runtime the gate still
+   routes Blackwell to the CPU reference. **Production needs the gate narrowed** so
+   sm120f uses the fused kernel where validated and falls back to the reference
+   otherwise — NOT a manual env flag. (Not flipped yet: too risky before #3/#4.)
+3. **Tile / SMEM selection (unresolved):** the heuristic clamps *stages* but not
+   *tile size*; `128x256x128` (146 KB) overflows the 99 KB cap and the `max(2,…)`
+   floor could even force it. Blackwell tile selection must exclude SMEM-overflow
+   tiles. Validation used a hand-picked `128x128x64`.
+4. **Validation breadth (limited):** the denoise fix is verified for **one** config
+   (128×128×64, R128). The full tile/R matrix (and the `test_pearl_gemm` suite with
+   the fused kernel forced) is not yet run on sm120f.
+5. **No live node:** consensus validity was proven by recomputing the canonical
+   jackpot hash for the kernel's found indices (strong), not by submitting to a
+   running `pearld`.
+
+**Bottom line:** the hard kernel bug (why PR #130 had to fall back to CPU) is
+genuinely fixed and consensus-valid. What remains is *enablement plumbing*
+(dispatch wiring, SMEM-aware tile selection, full-config validation) — engineering,
+not unknowns. Competitive consumer-Blackwell mining via PR #118's approach is now
+demonstrated viable, not just theorized.
+
 ## Repro
 
 ```bash

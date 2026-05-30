@@ -206,7 +206,15 @@ def detect_native_cuda_arch() -> str | None:
     arch = f"{major}{minor}"
     # Pearl's current kernels use Hopper architecture-accelerated instructions,
     # so Hopper native builds should keep the existing sm_90a target.
-    return "90a" if arch == "90" else arch
+    if arch == "90":
+        return "90a"
+    # Consumer Blackwell (sm_120/sm_121) must use the FAMILY target ('f'): only
+    # sm_120f/sm_121f define CUTLASS_ARCH_MMA_SM12xF_ENABLED -> CUTE_ARCH_TMA_SM90_ENABLED,
+    # which the kernels' SM90_TMA_LOAD path requires. Plain sm_120 / sm_120a do NOT
+    # enable it and the kernel hits a TMA launch failure at runtime.
+    if arch in BLACKWELL_CONSUMER_ARCHS:
+        return f"{arch}f"
+    return arch
 
 
 def warn_if_experimental_blackwell_arch(archs: list[str], source: str) -> None:
