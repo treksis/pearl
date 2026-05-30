@@ -39,7 +39,10 @@ dependencies = [
   "torch==2.11.0",
   "torchaudio==2.11.0",
   "torchvision==0.26.0",
-  "vllm==0.20.2",
+  "vllm==0.21.0",
+  # vLLM-Omni pairs with the same vLLM minor (0.21.x). Allow the 0.21.0rc line
+  # that the integration was developed against.
+  "vllm-omni>=0.21.0rc2",
 ]
 requires-python = "==3.12.*"
 license = {text = "MIT"}
@@ -52,6 +55,12 @@ classifiers = [
 ]
 
 [project.entry-points."vllm.general_plugins"]
+register_pearl_mining_plugin = "vllm_miner:register_pearl_miner_layer"
+
+# vLLM-Omni loads its own plugin group in omni worker/stage processes
+# (vllm_omni/plugins/__init__.py, worker/mixins.py, diffusion worker). Register
+# here too so the Pearl layer is installed under `vllm serve --omni` as well.
+[project.entry-points."vllm_omni.general_plugins"]
 register_pearl_mining_plugin = "vllm_miner:register_pearl_miner_layer"
 
 

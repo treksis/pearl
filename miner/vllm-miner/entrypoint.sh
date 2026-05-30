@@ -18,5 +18,8 @@ PEARL_PID=$!
 # Wait until the gateway is ready
 curl -s http://localhost:8339/metrics --retry-delay 1 --retry 20 --retry-all-errors > /dev/null
 
-echo "Starting vllm serve with args: $@"
-exec vllm serve "$@"
+# Use the vLLM-Omni CLI: without `--omni` it delegates to vanilla `vllm serve`
+# (AR / LLM mining), with `--omni` it launches the omni multi-stage / diffusion
+# server (diffusion DiT mining via `--quantization pearl_diffusion`).
+echo "Starting vllm-omni serve with args: $@"
+exec vllm-omni serve "$@"
