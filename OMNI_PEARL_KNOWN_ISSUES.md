@@ -13,16 +13,40 @@ assumed, and where the bugs/risks are. Prioritized P0 (blocks mainnet) → P2 (o
 - Native kernel is the default on `sm_120f` builds with no env flag (dispatch
   wired); Hopper byte-identical.
 
-## P0 — must verify before any mainnet/fork launch
+## P0 — OPEN BLOCKER: in-kernel PoW transcript is wrong on consumer Blackwell
 
-1. **End-to-end ZK proof + node acceptance is UNTESTED for a Blackwell/diffusion
-   block.** We only recomputed the PoW jackpot hash in Python. The real path —
-   `generate_proof()` (plonky2) → `verify_proof()` → node block acceptance — has
-   not been run for a block mined on Blackwell or sourced from diffusion. If the
-   `zk-pow` `sanity_checks` (rank ∈ 2⁵..2¹⁰, `common_dim`/tile divisibility) reject
-   the diffusion layer's `(k, rank)`, blocks fail despite a valid PoW hash. **This
-   is the single biggest unverified link.** Must: run `generate_proof`/`verify_proof`
-   on a kernel-found block, end to end against a node.
+1. **The fused kernel's in-kernel PoW finds blocks that FAIL canonical
+   `verify_plain_proof` on consumer Blackwell (sm120).** Established end-to-end
+   (the real plain-proof verifier, not a numpy approximation):
+   - Reference-path block → `verify_plain_proof: True` ✅
+   - Kernel-path block → `verify_plain_proof: False` ("hash does not meet target") ❌
+   Same harness; only difference is native kernel vs reference. So **the in-kernel
+   PoW transcript computation on the SM80 `mma.sync` path diverges from the
+   canonical jackpot** — the kernel's "blocks" would be rejected by the chain.
+   (This corrects an earlier over-claim: a numpy recompute matched the kernel, but
+   the authoritative Rust verifier does not. The denoise fix made the GEMM output
+   correct; the PoW *transcript* is still wrong.)
+
+   **Ruled out:** `tensor_hash` (GPU == reference), commitment (shared), GEMM/noising
+   values (bit-exact), header/target consistency, and the cols_pattern *span* — a
+   tested hypothesis (truncating `cols_pattern` to fit the 128-wide tile) **did not
+   fix it.** The divergence is in how the per-thread accumulator fragment maps to /
+   reduces into the canonical per-partition jackpot on the `mma.sync` layout.
+
+   **Compounding hardware constraint:** the canonical PoW pattern is *designed for a
+   128×256 tile* (`settings.py` comment), which is ~146 KB SMEM and **does not fit
+   consumer Blackwell's 99 KB cap**. We cap to 128×128, which (besides the transcript
+   bug) truncates the partition. A real fix likely needs **both** an `mma.sync`
+   transcript-layout fix **and** a SMEM-compatible mining config, co-designed and
+   validated against the ZK oracle.
+
+   **Status: NOT fixed.** This is the genuine hard core of competitive consumer-
+   Blackwell mining and needs dedicated, iterative kernel debugging (dump per-thread
+   fragment (row,col,value) and diff against the canonical jackpot, byte-exact),
+   beyond a single session. Two fix attempts (denoise — succeeded; transcript pattern
+   — failed) so far. Until this is fixed, **native Blackwell mining is not
+   consensus-valid / not competitive.** The reference path is consensus-valid but
+   CPU/easy-target-only (not competitive).
 
 2. **Full diffusion serving end-to-end is UNTESTED.** The shim is validated on a
    synthetic layer + real `ColumnParallelLinear`, not a real DiT generating images
