@@ -32,27 +32,26 @@ assumed, and where the bugs/risks are. Prioritized P0 (blocks mainnet) → P2 (o
    a differently-named subprocess, the async manager never inits and **mining is
    silently off**.
 
-## P1 — latent footguns / inconsistencies
+## P1 — investigated; NOT real bugs (kept here for the record, deliberately NOT "fixed")
 
-3. **Two tile sources (inconsistent).** `GPUMatmulConfigFactory.create()` builds
-   `MatmulConfig` from a **fresh** `MinerSettings()` (uncapped 128x256x128), while
-   the **execution** tile passed to `noisy_gemm` comes from `config.settings`
-   (capped to 128x128x64 on Blackwell). Currently harmless because `matmul_tile_*`
-   is metadata and the consensus `mining_config` (patterns + rank + k) is
-   tile-independent — but if `matmul_tile_*` is ever serialized into the block or
-   checked by a verifier, the mismatch is a bug. **Action:** confirm `matmul_tile_*`
-   is never consensus-checked, or thread the capped tile through `create()`.
+3. **"Two tile sources" — NOT a bug.** Verified by grep: `MatmulConfig.matmul_tile_*`
+   is only ever *set* (in `create()`) and read in tests — **never** in any
+   consensus/block/verify path. `adjust_target()` uses the `mining_config`
+   (rows/cols pattern + rank), the block/PlainProof carries no tile, and the
+   execution tile comes from `config.settings` (capped). `matmul_tile_*` is
+   vestigial metadata; changing it would be churn. Left as-is.
 
-4. **`quant_7bit` at weight-load needs the async manager initialized.**
-   `DiffusionPearlOnlineLinearMethod.process_weights_after_loading` →
-   `quant_7bit` → `get_async_manager()._conf.quantization_fast_math`. If weight
-   loading ever runs before `register_pearl_miner_layer` inits the async manager,
-   it raises. Ordering is currently correct (plugin loads before model load) but
-   it's an unguarded assumption.
+4. **`quant_7bit` ordering — already handled.** If the async manager isn't
+   initialized, `get_async_manager()` already raises a clear
+   `AssertionError("Async Loop Manager has not been initialized yet")`. No silent
+   failure; a guard would be redundant. Left as-is.
 
-5. **`PEARL_GEMM_FORCE_KERNEL=1` on a non-native (plain `sm_120`) build crashes**
-   (TMA launch failure, no fallback). It's a diagnostic escape hatch, documented,
-   but a footgun if used on the wrong build.
+5. **`PEARL_GEMM_FORCE_KERNEL` footgun — intentional.** Explicit diagnostic escape
+   hatch; guarding it defeats the purpose. Documented, left as-is.
+
+**Fixed (genuine, minimal):** the tile cap silently no-op'd if
+`shared_memory_per_block_optin` were unavailable (→ 0 → no cap → 146KB launch
+crash). Now caps conservatively when SMEM is unknown on Blackwell-family parts.
 
 ## P2 — build / ops
 

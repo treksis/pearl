@@ -38,7 +38,10 @@ def _apply_blackwell_tile_caps(miner_settings: MinerSettings) -> None:
             return
         props = torch.cuda.get_device_properties(0)
         smem = getattr(props, "shared_memory_per_block_optin", 0)
-        consumer_blackwell = props.major >= 10 and smem and smem < 128 * 1024
+        # If SMEM is unknown (0), cap conservatively on Blackwell-family parts to
+        # avoid a 146KB-tile launch failure; known large-SMEM parts (datacenter)
+        # keep the default tile.
+        consumer_blackwell = props.major >= 10 and (not smem or smem < 128 * 1024)
         tile_too_big = miner_settings.tile_size_n > 128 or miner_settings.tile_size_k > 64
         if consumer_blackwell and tile_too_big:
             _LOGGER.info(
