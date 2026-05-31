@@ -39,6 +39,8 @@ REFERENCE_BACKEND_MIN_EXPECTED_HITS = float(
 def _use_reference_cuda_backend(device: torch.device | str | None = None) -> bool:
     if os.environ.get("PEARL_GEMM_FORCE_KERNEL", "").lower() in ("1", "true", "yes"):
         return False
+    if os.environ.get("PEARL_GEMM_FORCE_REFERENCE", "").lower() in ("1", "true", "yes"):
+        return True
     if not torch.cuda.is_available():
         return False
 
@@ -47,7 +49,16 @@ def _use_reference_cuda_backend(device: torch.device | str | None = None) -> boo
         return False
 
     major, _minor = torch.cuda.get_device_capability(cuda_device)
-    return major >= 10
+    if major < 10:
+        return False
+    # Blackwell: use the native fused kernel iff this build enabled it
+    # (sm_12xf family target). Must mirror the C++ use_reference_backend().
+    try:
+        import pearl_gemm_cuda
+
+        return not pearl_gemm_cuda.native_blackwell_build()
+    except Exception:
+        return True
 
 
 def _rotl32(values: np.ndarray, shift: int) -> np.ndarray:

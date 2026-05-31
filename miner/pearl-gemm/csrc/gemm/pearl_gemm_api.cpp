@@ -118,16 +118,37 @@ namespace {
 
 constexpr int64_t kReferenceBackendPadMultiple = 128;
 
+// True iff this build compiled the fused kernel for a Blackwell consumer family
+// target (sm_12xf), which enables the SM90 TMA path the kernel needs.
+constexpr bool kNativeBlackwellBuild =
+#ifdef PEARL_GEMM_NATIVE_BLACKWELL
+    true;
+#else
+    false;
+#endif
+
 bool use_reference_backend() {
-  // Diagnostic override: PEARL_GEMM_FORCE_KERNEL=1 forces the native fused
-  // CUTLASS kernel + in-kernel PoW (PR #118 path) even on Blackwell, bypassing
-  // the reference backend. Used to empirically validate the fused path on sm120.
-  const char* force = std::getenv("PEARL_GEMM_FORCE_KERNEL");
-  if (force != nullptr && (force[0] == '1' || force[0] == 'T' || force[0] == 't')) {
+  // Explicit overrides (escape hatches): force the native fused kernel or the
+  // reference backend regardless of device/build.
+  const char* force_kernel = std::getenv("PEARL_GEMM_FORCE_KERNEL");
+  if (force_kernel != nullptr &&
+      (force_kernel[0] == '1' || force_kernel[0] == 'T' || force_kernel[0] == 't')) {
     return false;
   }
+  const char* force_ref = std::getenv("PEARL_GEMM_FORCE_REFERENCE");
+  if (force_ref != nullptr &&
+      (force_ref[0] == '1' || force_ref[0] == 'T' || force_ref[0] == 't')) {
+    return true;
+  }
   auto dprops = at::cuda::getCurrentDeviceProperties();
-  return dprops != nullptr && dprops->major >= 10;
+  // Hopper (sm90) and older: the native kernel is the only path.
+  if (dprops == nullptr || dprops->major < 10) {
+    return false;
+  }
+  // Blackwell (major >= 10): use the native fused kernel only if this build
+  // enabled it (sm_12xf family target). Otherwise the kernel's SM90 TMA path
+  // would fail to launch, so fall back to the reference backend.
+  return !kNativeBlackwellBuild;
 }
 
 int64_t round_up_to_multiple(int64_t value, int64_t multiple) {
@@ -1281,6 +1302,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("output"), py::arg("scales"), py::arg("max_val") = 63,
         py::arg("smooth_scale") = py::none(), py::arg("fast_math") = false);
   m.def("inner_hash", &inner_hash, "Inner hash function");
+  m.def(
+      "native_blackwell_build", []() { return kNativeBlackwellBuild; },
+      "True if built for a Blackwell consumer family target (sm_12xf) with the "
+      "native fused kernel enabled.");
   m.def("tensor_hash", &run_tensor_hash,
         "CUDA hash function with configurable kernel parameters",
         py::arg("data"), py::arg("key"), py::arg("out"), py::arg("roots"),

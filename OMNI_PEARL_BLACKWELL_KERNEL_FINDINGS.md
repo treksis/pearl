@@ -211,6 +211,48 @@ genuinely fixed and consensus-valid. What remains is *enablement plumbing*
 not unknowns. Competitive consumer-Blackwell mining via PR #118's approach is now
 demonstrated viable, not just theorized.
 
+---
+
+# PRODUCTION WIRING (the native kernel is now the default on Blackwell)
+
+The fix above made the kernel *correct*; this makes the miner actually *use* it on
+consumer Blackwell by default — no diagnostic env flag. Wiring (commit follows):
+
+1. **Build target (auto):** `detect_native_cuda_arch()` returns `120f`/`121f` for
+   consumer Blackwell → auto-`uv sync` builds the TMA-enabled kernel.
+2. **Build-gated dispatch:** when built for a Blackwell family target, `setup.py`
+   bakes in `-DPEARL_GEMM_NATIVE_BLACKWELL`. The C++ `use_reference_backend()` now:
+   `FORCE_KERNEL` env → kernel; `FORCE_REFERENCE` env → reference; `major < 10` →
+   kernel (Hopper); `major >= 10` → **native kernel iff the build enabled it, else
+   reference fallback** (a plain `sm_120` build still safely falls back). The build
+   flag is exposed to Python as `pearl_gemm_cuda.native_blackwell_build()`.
+3. **Python gates mirror it:** `gemm_operators._use_reference_cuda_backend` and
+   `pearl_gemm_interface._use_reference_cuda_backend` both honor `FORCE_*` and
+   otherwise return `not native_blackwell_build()` on Blackwell — so the GEMM,
+   in-kernel PoW, and hashing paths stay consistent.
+4. **SMEM-safe tile (auto):** `init_async_manager` clamps the default `128x256x128`
+   (146 KB) mining tile to `128x128x64` on consumer Blackwell (SMEM optin < 128 KB).
+   The tile is execution-only and **not** part of the consensus mining config
+   (rows/cols pattern + rank + k), so this is consensus-safe (proven).
+
+**Validated end-to-end with NO force flag (sm_120f build):**
+
+```
+native_blackwell_build():     True
+gate (pearl_gemm_interface):  reference=False   # → GPU
+gate (gemm_operators):        reference=False   # → in-kernel PoW
+tile cap:                     128x256x128 -> 128x128x64
+no-force noisy_gemm:          denoised cos=1.00000, host_signal=kSignalTriggered
+```
+
+So on a consumer Blackwell `sm_120f` build, the miner now **defaults to the native
+fused kernel + in-kernel PoW**, produces correct output, and auto-sizes the tile —
+with `FORCE_KERNEL` / `FORCE_REFERENCE` escape hatches. Hopper untouched.
+
+**Still open (honest):** full `test_pearl_gemm` config sweep under the native
+kernel; sustained end-to-end mining against a live `pearld` node; throughput is
+solid (168 int8-TOPS vanilla, 2.15× cuBLAS) but not yet peak-tuned for sm120.
+
 ## Repro
 
 ```bash

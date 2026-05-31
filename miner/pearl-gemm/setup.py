@@ -513,6 +513,14 @@ if not SKIP_CUDA_BUILD:
 
     feature_args = [f"-D{name}" for name, enabled in FEATURE_FLAGS.items() if enabled]
 
+    # When building for a Blackwell consumer FAMILY target (sm_12xf — the only
+    # 120-family target that enables CUTE_ARCH_TMA_SM90_ENABLED, which the fused
+    # kernel's SM90_TMA_LOAD path requires), bake in a define so the runtime
+    # dispatch defaults to the native fused kernel on Blackwell. Plain sm_120 /
+    # sm_120a builds (no TMA) omit it and fall back to the reference backend.
+    if any(a.endswith("f") and a[:-1] in BLACKWELL_CONSUMER_ARCHS for a in cuda_archs):
+        feature_args.append("-DPEARL_GEMM_NATIVE_BLACKWELL")
+
     gcc_flags = [
         "-O3",
         "-std=c++20",

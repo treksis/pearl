@@ -13,13 +13,22 @@ BLAKE3_CHUNK_LEN = 1024
 def _use_reference_cuda_backend(device=None) -> bool:
     if os.environ.get("PEARL_GEMM_FORCE_KERNEL", "").lower() in ("1", "true", "yes"):
         return False
+    if os.environ.get("PEARL_GEMM_FORCE_REFERENCE", "").lower() in ("1", "true", "yes"):
+        return True
     if not torch.cuda.is_available():
         return False
     try:
         major, _minor = torch.cuda.get_device_capability(device)
     except Exception:
         return False
-    return major >= 10
+    if major < 10:
+        return False
+    # Blackwell: use the native fused kernel iff this build enabled it
+    # (sm_12xf family target). Mirrors the C++ use_reference_backend().
+    try:
+        return not pearl_gemm_cuda.native_blackwell_build()
+    except Exception:
+        return True
 
 
 def _pad_to_blake3_chunk_boundary(raw: bytes) -> bytes:

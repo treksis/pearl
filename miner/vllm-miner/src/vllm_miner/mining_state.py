@@ -21,6 +21,38 @@ def get_async_manager() -> AsyncLoopManager:
     return _async_manager
 
 
+def _apply_blackwell_tile_caps(miner_settings: MinerSettings) -> None:
+    """Cap the mining tile to fit consumer Blackwell's SMEM.
+
+    Consumer Blackwell (sm120/sm121) caps shared memory at ~99 KB/CTA, which
+    cannot fit the default 128x256x128 mining tile (~146 KB). The execution tile
+    is NOT part of the consensus mining config (rows/cols pattern + rank + k), so
+    a smaller tile is consensus-compatible (verified: a 128x128x64 tile produces
+    blocks that verify against the canonical config). Datacenter parts with
+    larger SMEM keep the default.
+    """
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return
+        props = torch.cuda.get_device_properties(0)
+        smem = getattr(props, "shared_memory_per_block_optin", 0)
+        consumer_blackwell = props.major >= 10 and smem and smem < 128 * 1024
+        tile_too_big = miner_settings.tile_size_n > 128 or miner_settings.tile_size_k > 64
+        if consumer_blackwell and tile_too_big:
+            _LOGGER.info(
+                f"Consumer Blackwell SMEM cap ({smem // 1024}KB): clamping mining tile "
+                f"{miner_settings.tile_size_m}x{miner_settings.tile_size_n}x"
+                f"{miner_settings.tile_size_k} -> 128x128x64 (execution-only, consensus-safe)"
+            )
+            miner_settings.tile_size_m = 128
+            miner_settings.tile_size_n = 128
+            miner_settings.tile_size_k = 64
+    except Exception as e:
+        _LOGGER.warning("Blackwell tile-cap check failed: %r", e)
+
+
 def init_async_manager(miner_settings: MinerSettings | None = None) -> None:
     """Initialize the global mining state."""
     global _async_manager
@@ -28,6 +60,7 @@ def init_async_manager(miner_settings: MinerSettings | None = None) -> None:
     if _async_manager is None or _async_manager._pool is None:
         miner_settings = miner_settings if miner_settings is not None else MinerSettings()
         miner_settings.enable_async_cuda_event_processing = True
+        _apply_blackwell_tile_caps(miner_settings)
 
         _async_manager = AsyncLoopManager(
             MinerRpcConfig(transport="uds", socket_path=config.gateway_socket_path),
