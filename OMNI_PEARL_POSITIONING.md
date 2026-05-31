@@ -109,9 +109,20 @@ technical-risk story than most new L1s, which speculators should value.
 > fidelity are the honest costs; accessibility and a generative-AI useful-work
 > economy are the payoff.
 
+## Proven (the moat is real, not a claim)
+A block mined by the native fused kernel on consumer Blackwell (RTX PRO Blackwell,
+sm120) passes the **authoritative Rust `verify_plain_proof`** and the full
+**plonky2 `generate_proof` → `verify_proof` ZK chain** end to end (`ZK_E2E_PASS`).
+The fork's one consensus change is `cols_pattern` sized to the 32-column fragment a
+128-wide tile opens under Blackwell's 99 KB SMEM — see
+`OMNI_PEARL_KNOWN_ISSUES.md` P0 and `test_blackwell_block_verifies.py`. This is the
+hard part of an accessible-hardware PoUW fork, and it is **done and validated**.
+
 ## What still must ship for the claim to be fully true
-(see `OMNI_PEARL_BLACKWELL_KERNEL_FINDINGS.md` + `OMNI_PEARL_BUILD_PLAN.md`)
+(see `OMNI_PEARL_KNOWN_ISSUES.md` + `OMNI_PEARL_BUILD_PLAN.md`)
 - Full `test_pearl_gemm` config sweep under the native Blackwell kernel.
+- Full diffusion serving end-to-end (real DiT through vLLM-Omni with live mining state).
 - Sustained end-to-end mining against a live node with a canonical quantized DiT.
-- Fork genesis/difficulty/reward calibration for the consumer-GPU fleet.
+- Fork genesis/difficulty/reward calibration for the consumer-GPU fleet
+  (note: the 32-col tile halves per-tile work vs upstream's 64 — factor `h*w*k`).
 - Confirm the canonical model's layer `(k, rank)` satisfy the zk-pow constraints.

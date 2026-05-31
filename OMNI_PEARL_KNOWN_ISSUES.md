@@ -5,13 +5,45 @@ diffusion shim + omni plugin). Honest accounting of what is verified, what is
 assumed, and where the bugs/risks are. Prioritized P0 (blocks mainnet) → P2 (ops).
 
 ## Verified (retired risks)
+- **Native Blackwell blocks are consensus-valid END TO END.** A block mined by the
+  fused kernel on consumer Blackwell (sm120) now passes the authoritative Rust
+  `verify_plain_proof` ("Mining solution verified successfully"), confirmed on
+  repeated runs and via the full `verify_plain_proof → generate_proof (plonky2) →
+  verify_proof` chain. This was the P0 blocker; it is **closed** (see below).
 - **Denoise fix generalizes:** all 8 SMEM-fitting compiled configs (R128/R64 ×
   {128x128x64, 64x128x64, 64x64x64} × stages 2/3) produce denoised C at
   **cos = 1.00000** vs the oracle. Not a one-config fluke.
-- PoW hash is consensus-valid at the **hash level** (canonical recompute: found
-  block's hash ≤ target).
+- The in-kernel PoW transcript on `mma.sync` is **correct** — it matches the
+  canonical jackpot for the tile it opens (no transcript-layout bug after all).
 - Native kernel is the default on `sm_120f` builds with no env flag (dispatch
   wired); Hopper byte-identical.
+
+## P0 — RESOLVED: it was a tile/pattern-size mismatch, NOT a transcript bug
+
+1. **Root cause (corrected).** Consumer Blackwell's 99 KB SMEM forces a 128-wide
+   execution tile, where one `mma.sync` thread holds a **2-row × 32-col** accumulator
+   fragment. Upstream Pearl's `cols_pattern` has **64 entries** (sized for Hopper's
+   128×256 tile), so the kernel could only open **half** the consensus tile (2×32 of
+   the declared 2×64). The verifier computed the jackpot over the 32 submitted
+   columns while the difficulty bound assumed 64 → kernel blocks were rejected
+   ("hash does not meet difficulty target").
+
+   **The kernel transcript was never wrong.** Proven by isolating the data: scoring
+   the canonical jackpot over the kernel's own noised tensors at its own reported
+   indices passes at the kernel's (adjusted) target. The A/B test is decisive — same
+   inputs/noise/target: reference backend opens a full 2×64 tile → `verify=True`;
+   kernel opens 2×32 → `verify=False`.
+
+   **Fix (hard-fork consensus parameter):** size `cols_pattern` to the 32 columns a
+   bN=128 thread actually opens, and set the consensus tile to 128×128. With this,
+   kernel blocks pass `verify_plain_proof` (3/3 + full ZK chain). See
+   `miner-base/src/miner_base/settings.py`.
+
+   **Why earlier attempts "failed":** (a) an earlier `cols_pattern=32` test edited the
+   *repo source* while the venv ran a *non-editable installed copy* still at 64 — the
+   change never took effect; (b) the E2E harness mixed `mining_job.target` with the
+   header `nbits` target. Both were test-environment errors, not kernel defects.
+   Regression test: `miner/vllm-miner/tests/test_blackwell_block_verifies.py`.
 
 ## P0 — OPEN BLOCKER: in-kernel PoW transcript is wrong on consumer Blackwell
 
@@ -97,6 +129,8 @@ crash). Now caps conservatively when SMEM is unknown on Blackwell-family parts.
   matmuls, not real inference) — true for Pearl too, but relevant to the value claim.
 
 ## Bottom line
-The kernel-level work is solid and now broadly validated. The unproven surface is
-**above the kernel**: end-to-end ZK/node acceptance and full diffusion serving.
-Those are the two things to close before claiming a launch-ready fork.
+The kernel-level work is solid and the **consensus path is now proven end to end**:
+a native-Blackwell-mined block passes `verify_plain_proof` AND the full plonky2
+`generate_proof`/`verify_proof` ZK chain (`ZK_E2E_PASS`). The remaining unproven
+surface is **full diffusion serving** (P0 #2 below) and live-node/economic
+calibration — not the mining mechanism itself.
