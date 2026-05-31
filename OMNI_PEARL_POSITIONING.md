@@ -44,6 +44,36 @@ hardware gate and changed the workload.
    harness. The roadmap is "mine on the broadest possible hardware," vs a
    Hopper-centric incumbent.
 
+## Why Hopper gates Pearl — and why diffusion ungates it (the real argument)
+
+The hardware barrier is **not** the mining kernel; it's the *useful work's memory
+profile*. This is the deepest reason the fork makes sense:
+
+- **Mining itself is tensor-core (compute) bound, not VRAM-bound.** Large matmuls
+  have high arithmetic intensity → bound by tensor-core TOPS. VRAM is capacity (fit
+  the model), not throughput. So *for mining*, you want TOPS — which consumer cards
+  have. You don't need Hopper to mine.
+- **Pearl needs Hopper because of LLM serving, not mining.** Its useful work is
+  large LLMs (70B-class). Those need **80 GB VRAM** to hold the model and are
+  **memory-bandwidth-bound** during decode (every token streams the whole model's
+  weights) → they require Hopper's HBM (~3.35 TB/s). A 24 GB consumer card can't
+  even load a 70B model. Mining just rode along on the datacenter hardware the LLM
+  workload forced.
+
+| | Pearl (LLM) | Omni-pearl (diffusion) |
+|---|---|---|
+| Useful-work bottleneck | memory-bandwidth + VRAM (decode streams weights) | **compute** (DiT reuses weights across thousands of patches) |
+| Model size | ~70 B → ~70 GB → needs 80 GB H100 | DiT ~2–12 B → fits a 24 GB consumer card |
+| Natural hardware | datacenter (HBM, big VRAM) | **consumer GPU (strong compute, modest VRAM/bandwidth)** |
+
+**Diffusion is compute-bound and smaller — exactly what a consumer Blackwell card
+is good at; LLM is bandwidth-bound and huge — exactly what forces Hopper.** So
+omni-pearl isn't merely "Pearl's kernel on cheaper GPUs"; it's the one mainstream
+AI workload whose hardware profile *matches* cheap GPUs. The kernel port made it
+*possible*; the workload choice makes it *natural*. (Honest caveat: a consumer card
+still loses **per-card** to an H100 on raw compute — the edge is **per-dollar** and
+**accessibility**, not head-to-head.)
+
 ## Same security, lower risk than a brand-new chain
 
 The PoUW mechanism, the ZK verifier (plonky2), and the consensus transcript are
